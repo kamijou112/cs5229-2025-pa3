@@ -1,4 +1,4 @@
-# CS5229 Advanced Computer Networks - Programming Assignment 1
+# CS5229 Advanced Computer Networks - Programming Assignment 3
 
 This repository hosts the distribution package of Programming Assignment 3 for the NUS CS5229 Advanced Computer Networks course.
 

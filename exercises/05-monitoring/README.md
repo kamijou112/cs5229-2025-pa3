@@ -146,7 +146,7 @@ An example are as follow:
 root@p4# ./generate_traffic.py ./sample-trace/01-trace.csv
 ```
 The `generate_traffic.py` script will print out a checkpoint for every 100 packet replayed.
-Feel free to modify the script to suite your testing needs.
+Feel free to modify the script to suit your testing needs.
 
 Your job is to extend this file so it can (1) detect and report the HH flows to the collector, and (2) also drop suspicious DNS response traffic.
 

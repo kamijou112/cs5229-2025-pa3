@@ -24,8 +24,9 @@ A victim of such an attack may receive a large volume of *unsolicited* DNS respo
 For any DNS request-response pair, when the number of *unsolicited* DNS response packets exceeds a certain threshold, i.e., `drop_threshold`, we will consider this as a potential DNS amplification attack.
 As such, we will drop all subsequent DNS response packets for that flow.
 
-Note that you are expected to reuse your sketch implementation from Programming Assignment 2.
+Note that you are expected to use your sketch implementation from Programming Assignment 2.
 As such, you will need to make a copy of `libsketch_impl.so` from PA2 into the root directory of this exercise.
+Later, we will provide a reference implementation of the sketch library for you to test your program once PA2 concludes.
 
 For this exercise, we provide you with two short packet traces under `sample-trace`.
 In these short traces, as the counts are small and the number of flows are less, the expected error rates should be little to none.
@@ -68,6 +69,7 @@ All hosts are connected to switch `s1` via ports `p1`, `p2`, and `p3` respective
 The switch shall implement the following functionalities:
 - Use your sketch implementation from PA2 to keep track of per-flow packet counts.
   - A flow is defined by the 5-tuple: (src IP, dst IP, src port, dst port, protocol).
+  - You only need to handle IPv4 packets.
 - If a flow's packet count exceeds `hh_threshold`, mirror the packet to the collector host `h3` via port `p3`.
   - Only the first packet that exceeds the threshold should be mirrored.
   - Subsequent packets of the same flow should not be mirrored again.
@@ -75,7 +77,7 @@ The switch shall implement the following functionalities:
 
 #### Sketch API
 
-You are expected to reuse your sketch implementation from PA2, but only the following APIs are loaded and used for this exercise.
+You are expected to use the sketch implementation from PA2, but only the following APIs are loaded and used for this exercise.
 ```C
 ...
 Sketch* sketch_create();
@@ -83,6 +85,8 @@ uint32_t sketch_add_item(Sketch* es, const PacketFlow* flow);
 uint32_t sketch_estimate_frequency(Sketch* es, const PacketFlow* flow);
 ...
 ```
+
+> Note: We will provide a reference implementation of the sketch library for you to test your program once PA2 concludes.
 
 ## Step 1: Copy the Sketch Library
 

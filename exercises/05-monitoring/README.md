@@ -73,7 +73,7 @@ The switch shall implement the following functionalities:
 - If a flow's packet count exceeds `hh_threshold`, mirror the packet to the collector host `h3` via port `p3`.
   - Only the first packet that exceeds the threshold should be mirrored.
   - Subsequent packets of the same flow should not be mirrored again.
-- For any DNS request-response pairs, if the number of unsolicited DNS response packets exceeds `drop_threshold`, i.e., when `#responses > #requests`, drop all subsequent DNS response packets for that flow.
+- For any DNS request-response pairs, if the number of unsolicited DNS response packets exceeds `drop_threshold`, i.e., when `#responses - #requests > drop_threshold`, drop all subsequent DNS response packets for that flow.
 
 #### Sketch API
 

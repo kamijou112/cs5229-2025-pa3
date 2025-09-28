@@ -130,6 +130,7 @@ void initialize_mac_address_table()
         RTE_LOG(ERR, USER1, "Failed to add MAC addresses to hash table\n");
         free(mac1_data);
         free(mac2_data);
+        free(mac3_data);
         return;
     }
     RTE_LOG(INFO, USER1, "Initialized MAC table with two entries\n");

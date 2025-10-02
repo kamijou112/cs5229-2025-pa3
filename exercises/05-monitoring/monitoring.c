@@ -12,6 +12,8 @@
 #include <rte_hash.h>
 #include <rte_table.h>
 #include <rte_hash_crc.h>
+#include <rte_tcp.h> // For rte_tcp_hdr
+#include <rte_udp.h> // For rte_udp_hdr
 
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -243,10 +245,16 @@ void monitoring_main_loop(void)
                 struct rte_ipv4_hdr *ipv4_hdr = rte_pktmbuf_mtod_offset(mbuf, struct rte_ipv4_hdr *, sizeof(struct rte_ether_hdr));
 
                 // Buffer for IP address strings for PacketFlow (used by sketch)
-                char src_ip_str[RTE_IPV4_ADDR_STRLEN];
-                char dst_ip_str[RTE_IPV4_ADDR_STRLEN];
-                rte_ipv4_to_str(rte_be_to_cpu_32(ipv4_hdr->src_addr), src_ip_str, sizeof(src_ip_str));
-                rte_ipv4_to_str(rte_be_to_cpu_32(ipv4_hdr->dst_addr), dst_ip_str, sizeof(dst_ip_str));
+                char src_ip_str[16];
+                char dst_ip_str[16];
+                uint32_t src_ip_hbo = rte_be_to_cpu_32(ipv4_hdr->src_addr);
+                uint32_t dst_ip_hbo = rte_be_to_cpu_32(ipv4_hdr->dst_addr);
+                snprintf(src_ip_str, sizeof(src_ip_str), "%u.%u.%u.%u",
+                             (src_ip_hbo >> 24) & 0xFF, (src_ip_hbo >> 16) & 0xFF,
+                             (src_ip_hbo >> 8) & 0xFF, src_ip_hbo & 0xFF);
+                snprintf(dst_ip_str, sizeof(dst_ip_str), "%u.%u.%u.%u",
+                             (dst_ip_hbo >> 24) & 0xFF, (dst_ip_hbo >> 16) & 0xFF,
+                             (dst_ip_hbo >> 8) & 0xFF, dst_ip_hbo & 0xFF);
 
                 // Create PacketFlow struct for sketch operations
                 PacketFlow flow_for_sketch = {

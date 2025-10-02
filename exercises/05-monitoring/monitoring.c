@@ -159,6 +159,59 @@ void initialize_sketch()
 }
 
 // TODO: Your code here (optional)
+#define COLLECTOR_PORT_ID 2
+
+// Structure to define a flow key for hash tables
+typedef struct {
+    uint32_t src_ip;
+    uint32_t dst_ip;
+    uint16_t src_port;
+    uint16_t dst_port;
+    uint8_t protocol;
+} FlowKey;
+
+// Structure to store DNS request/response counts
+typedef struct {
+    uint32_t requests;
+    uint32_t responses;
+} DnsFlowCounts;
+
+// Global hash tables for HH reporting and DNS flow counts
+struct rte_hash *hh_reported_table = NULL;
+struct rte_hash *dns_flow_counts_table = NULL;
+
+void initialize_hash_tables() {
+    // Initialize Heavy Hitter Reported Table
+    struct rte_hash_parameters hh_hash_params = {
+        .name = "hh_reported_table",
+        .entries = 1024, // Max number of heavy-hitter flows to track
+        .key_len = sizeof(FlowKey),
+        .hash_func = rte_hash_crc,
+        .hash_func_init_val = 0,
+        .socket_id = rte_socket_id(),
+    };
+    hh_reported_table = rte_hash_create(&hh_hash_params);
+    if (!hh_reported_table) {
+        rte_exit(EXIT_FAILURE, "Failed to create HH reported hash table\n");
+    }
+    RTE_LOG(INFO, USER1, "HH reported hash table created successfully\n");
+
+    // Initialize DNS Flow Counts Table
+    struct rte_hash_parameters dns_hash_params = {
+        .name = "dns_flow_counts_table",
+        .entries = 1024, // Max number of DNS flows to track
+        .key_len = sizeof(FlowKey),
+        .hash_func = rte_hash_crc,
+        .hash_func_init_val = 0,
+        .socket_id = rte_socket_id(),
+    };
+    dns_flow_counts_table = rte_hash_create(&dns_hash_params);
+    if (!dns_flow_counts_table) {
+        rte_exit(EXIT_FAILURE, "Failed to create DNS flow counts hash table\n");
+    }
+    RTE_LOG(INFO, USER1, "DNS flow counts hash table created successfully\n");
+}
+
 
 void monitoring_main_loop(void)
 {
@@ -187,6 +240,131 @@ void monitoring_main_loop(void)
                 }
 
                 // TODO: Your code here
+                struct rte_ipv4_hdr *ipv4_hdr = rte_pktmbuf_mtod_offset(mbuf, struct rte_ipv4_hdr *, sizeof(struct rte_ether_hdr));
+
+                // Buffer for IP address strings for PacketFlow (used by sketch)
+                char src_ip_str[RTE_IPV4_ADDR_STRLEN];
+                char dst_ip_str[RTE_IPV4_ADDR_STRLEN];
+                rte_ipv4_to_str(rte_be_to_cpu_32(ipv4_hdr->src_addr), src_ip_str, sizeof(src_ip_str));
+                rte_ipv4_to_str(rte_be_to_cpu_32(ipv4_hdr->dst_addr), dst_ip_str, sizeof(dst_ip_str));
+
+                // Create PacketFlow struct for sketch operations
+                PacketFlow flow_for_sketch = {
+                    .src_ip = src_ip_str,
+                    .dst_ip = dst_ip_str,
+                    .protocol = ipv4_hdr->next_proto_id
+                };
+
+                // Create FlowKey struct for hash table lookups
+                FlowKey flow_key = {
+                    .src_ip = rte_be_to_cpu_32(ipv4_hdr->src_addr),
+                    .dst_ip = rte_be_to_cpu_32(ipv4_hdr->dst_addr),
+                    .protocol = ipv4_hdr->next_proto_id
+                };
+
+                // Initialize ports to 0 for non-TCP/UDP or if not applicable
+                flow_for_sketch.src_port = 0;
+                flow_for_sketch.dst_port = 0;
+                flow_key.src_port = 0;
+                flow_key.dst_port = 0;
+
+                // Extract transport layer ports if UDP or TCP
+                if (ipv4_hdr->next_proto_id == IPPROTO_UDP) {
+                    struct rte_udp_hdr *udp_hdr = rte_pktmbuf_mtod_offset(mbuf, struct rte_udp_hdr *, sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr));
+                    flow_for_sketch.src_port = rte_be_to_cpu_16(udp_hdr->src_port);
+                    flow_for_sketch.dst_port = rte_be_to_cpu_16(udp_hdr->dst_port);
+                    flow_key.src_port = rte_be_to_cpu_16(udp_hdr->src_port);
+                    flow_key.dst_port = rte_be_to_cpu_16(udp_hdr->dst_port);
+                } else if (ipv4_hdr->next_proto_id == IPPROTO_TCP) {
+                    struct rte_tcp_hdr *tcp_hdr = rte_pktmbuf_mtod_offset(mbuf, struct rte_tcp_hdr *, sizeof(struct rte_ether_hdr) + sizeof(struct rte_ipv4_hdr));
+                    flow_for_sketch.src_port = rte_be_to_cpu_16(tcp_hdr->src_port);
+                    flow_for_sketch.dst_port = rte_be_to_cpu_16(tcp_hdr->dst_port);
+                    flow_key.src_port = rte_be_to_cpu_16(tcp_hdr->src_port);
+                    flow_key.dst_port = rte_be_to_cpu_16(tcp_hdr->dst_port);
+                }
+
+                 // -----------------------------------------------------------
+                // Heavy-Hitter Detection
+                // -----------------------------------------------------------
+                uint32_t current_freq = sketch_add_item(sketch, &flow_for_sketch);
+
+                if (current_freq > threshold->hh_threshold) {
+                    // Check if this flow has already been reported as HH
+                    uint8_t *reported_flag = NULL;
+                    if (rte_hash_lookup_data(hh_reported_table, &flow_key, (void **)&reported_flag) < 0) {
+                        // Flow not reported yet, so report it
+                        uint8_t new_flag = 1;
+                        if (rte_hash_add_key_data(hh_reported_table, &flow_key, &new_flag) < 0) {
+                            RTE_LOG(ERR, USER1, "Failed to add HH flow to reported table\n");
+                        } else {
+                            // Clone mbuf for mirroring to collector
+                            struct rte_mbuf *mirror_mbuf = rte_pktmbuf_clone(mbuf, mbuf_pool);
+                            if (mirror_mbuf) {
+                                if (rte_eth_tx_burst(COLLECTOR_PORT_ID, 0, &mirror_mbuf, 1) < 1) {
+                                    RTE_LOG(ERR, USER1, "Failed to mirror packet to collector port %u\n", COLLECTOR_PORT_ID);
+                                    rte_pktmbuf_free(mirror_mbuf); // Free if transmission fails
+                                } else {
+                                    RTE_LOG(INFO, USER1, "重度流量包镜像到端口 %u\n", COLLECTOR_PORT_ID);
+                                }
+                            } else {
+                                RTE_LOG(ERR, USER1, "克隆 mbuf 失败，无法镜像重度流量\n");
+                            }
+                        }
+                    }
+                }
+
+                // DNS Amplification Attack Mitigation
+                bool dropped = false;
+                if (flow_key.protocol == IPPROTO_UDP && (flow_key.src_port == 53 || flow_key.dst_port == 53)) {
+                    // Create a canonical flow key for DNS request-response pairs
+                    // If it's a response (src_port == 53), swap src/dst IP and ports to make it canonical (client->server view)
+                    FlowKey dns_canonical_flow_key = flow_key;
+
+                    if (flow_key.src_port == 53) { // This is a DNS response
+                        // Swap src and dst to get the "request" side of the flow for canonical key
+                        uint32_t temp_ip = dns_canonical_flow_key.src_ip;
+                        dns_canonical_flow_key.src_ip = dns_canonical_flow_key.dst_ip;
+                        dns_canonical_flow_key.dst_ip = temp_ip;
+
+                        uint16_t temp_port = dns_canonical_flow_key.src_port;
+                        dns_canonical_flow_key.src_port = dns_canonical_flow_key.dst_port;
+                        dns_canonical_flow_key.dst_port = temp_port;
+                    }
+                    // Now dns_canonical_flow_key represents the (client_ip, server_ip, client_port, 53, UDP) form
+
+                    DnsFlowCounts *dns_counts = NULL;
+                    int ret = rte_hash_lookup_data(dns_flow_counts_table, &dns_canonical_flow_key, (void **)&dns_counts);
+
+                    if (ret < 0) { // Flow not found, initialize counts and add to table
+                        DnsFlowCounts new_counts = { .requests = 0, .responses = 0 };
+                        if (flow_key.dst_port == 53) { // It's a DNS request
+                            new_counts.requests = 1;
+                        } else if (flow_key.src_port == 53) { // It's a DNS response
+                            new_counts.responses = 1;
+                        }
+                        if (rte_hash_add_key_data(dns_flow_counts_table, &dns_canonical_flow_key, &new_counts) < 0) {
+                            RTE_LOG(ERR, USER1, "添加 DNS 流到计数表失败\n");
+                        }
+                    } else { // Flow found, update counts
+                        if (flow_key.dst_port == 53) { // It's a DNS request
+                            dns_counts->requests++;
+                        } else if (flow_key.src_port == 53) { // It's a DNS response
+                            dns_counts->responses++;
+                        }
+
+                        // Check for DNS amplification attack
+                        if (dns_counts->responses > (dns_counts->requests + threshold->drop_threshold)) {
+                            RTE_LOG(INFO, USER1, "丢弃 DNS 响应包，可能存在放大攻击。流: %s:%hu -> %s:%hu\n",
+                                    src_ip_str, flow_key.src_port, dst_ip_str, flow_key.dst_port);
+                            rte_pktmbuf_free(mbuf);
+                            dropped = true;
+                        }
+                    }
+                }
+
+                if (dropped) {
+                    continue; // Packet was dropped, move to next packet
+                }
 
                 uint16_t *destination_port = NULL;
                 RTE_LOG(INFO, USER1, "Destination MAC: %02x:%02x:%02x:%02x:%02x:%02x\n",
@@ -258,6 +436,7 @@ int main(int argc, char **argv)
     initialize_mac_address_table();
     initialize_threshold();
     initialize_sketch();
+    initialize_hash_tables(); 
 
     monitoring_main_loop();
     return 0;

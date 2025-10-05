@@ -312,10 +312,10 @@ void monitoring_main_loop(void)
                                     RTE_LOG(ERR, USER1, "Failed to mirror packet to collector port %u\n", COLLECTOR_PORT_ID);
                                     rte_pktmbuf_free(mirror_mbuf); // Free if transmission fails
                                 } else {
-                                    RTE_LOG(INFO, USER1, "重度流量包镜像到端口 %u\n", COLLECTOR_PORT_ID);
+                                    RTE_LOG(INFO, USER1, "mirror hh to port %u\n", COLLECTOR_PORT_ID);
                                 }
                             } else {
-                                RTE_LOG(ERR, USER1, "克隆 mbuf 失败，无法镜像重度流量\n");
+                                RTE_LOG(ERR, USER1, "clone mbuf failed，unable to mirror hh\n");
                             }
                         }
                     }
@@ -344,14 +344,26 @@ void monitoring_main_loop(void)
                     int ret = rte_hash_lookup_data(dns_flow_counts_table, &dns_canonical_flow_key, (void **)&dns_counts);
 
                     if (ret < 0) { // Flow not found, initialize counts and add to table
-                        DnsFlowCounts new_counts = { .requests = 0, .responses = 0 };
-                        if (flow_key.dst_port == 53) { // It's a DNS request
-                            new_counts.requests = 1;
-                        } else if (flow_key.src_port == 53) { // It's a DNS response
-                            new_counts.responses = 1;
+                        // Allocate memory for DnsFlowCounts on the heap
+                        DnsFlowCounts *new_counts_ptr = (DnsFlowCounts *)rte_malloc(NULL, sizeof(DnsFlowCounts), 0);
+                        if (!new_counts_ptr) {
+                            RTE_LOG(ERR, USER1, "Failed to allocate memory for DnsFlowCounts\n");
+                            rte_pktmbuf_free(mbuf); // Free current mbuf if we can't track its flow
+                            dropped = true;
+                            continue; // Skip further processing for this packet
                         }
-                        if (rte_hash_add_key_data(dns_flow_counts_table, &dns_canonical_flow_key, &new_counts) < 0) {
-                            RTE_LOG(ERR, USER1, "添加 DNS 流到计数表失败\n");
+ 
+                        new_counts_ptr->requests = 0;
+                        new_counts_ptr->responses = 0;
+ 
+                        if (flow_key.dst_port == 53) { // It's a DNS request
+                            new_counts_ptr->requests = 1;
+                        } else if (flow_key.src_port == 53) { // It's a DNS response
+                            new_counts_ptr->responses = 1;
+                        }
+                        if (rte_hash_add_key_data(dns_flow_counts_table, &dns_canonical_flow_key, (void*)new_counts_ptr) < 0) {
+                            RTE_LOG(ERR, USER1, "failed to add NDS flow to count table\n");
+                            rte_free(new_counts_ptr); // Free allocated memory if add fails
                         }
                     } else { // Flow found, update counts
                         if (flow_key.dst_port == 53) { // It's a DNS request
@@ -362,7 +374,7 @@ void monitoring_main_loop(void)
 
                         // Check for DNS amplification attack
                         if (dns_counts->responses > (dns_counts->requests + threshold->drop_threshold)) {
-                            RTE_LOG(INFO, USER1, "丢弃 DNS 响应包，可能存在放大攻击。流: %s:%hu -> %s:%hu\n",
+                            RTE_LOG(INFO, USER1, "丢弃 DNS 响应包，可能存在放大攻击流: %s:%hu -> %s:%hu\n",
                                     src_ip_str, flow_key.src_port, dst_ip_str, flow_key.dst_port);
                             rte_pktmbuf_free(mbuf);
                             dropped = true;

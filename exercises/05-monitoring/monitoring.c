@@ -324,12 +324,14 @@ void monitoring_main_loop(void)
                 // DNS Amplification Attack Mitigation
                 bool dropped = false;
                 if (flow_key.protocol == IPPROTO_UDP && (flow_key.src_port == 53 || flow_key.dst_port == 53)) {
+                    RTE_LOG(INFO, USER1, "1");
                     // Create a canonical flow key for DNS request-response pairs
                     // If it's a response (src_port == 53), swap src/dst IP and ports to make it canonical (client->server view)
                     FlowKey dns_canonical_flow_key = flow_key;
 
                     if (flow_key.src_port == 53) { // This is a DNS response
                         // Swap src and dst to get the "request" side of the flow for canonical key
+                        RTE_LOG(INFO, USER1, "1.1");
                         uint32_t temp_ip = dns_canonical_flow_key.src_ip;
                         dns_canonical_flow_key.src_ip = dns_canonical_flow_key.dst_ip;
                         dns_canonical_flow_key.dst_ip = temp_ip;
@@ -345,25 +347,20 @@ void monitoring_main_loop(void)
 
                     if (ret < 0) { // Flow not found, initialize counts and add to table
                         // Allocate memory for DnsFlowCounts on the heap
-                        DnsFlowCounts *new_counts_ptr = (DnsFlowCounts *)rte_malloc(NULL, sizeof(DnsFlowCounts), 0);
-                        if (!new_counts_ptr) {
-                            RTE_LOG(ERR, USER1, "Failed to allocate memory for DnsFlowCounts\n");
-                            rte_pktmbuf_free(mbuf); // Free current mbuf if we can't track its flow
-                            dropped = true;
-                            continue; // Skip further processing for this packet
-                        }
- 
-                        new_counts_ptr->requests = 0;
-                        new_counts_ptr->responses = 0;
- 
+                        RTE_LOG(INFO, USER1, "2");
+                        DnsFlowCounts new_counts = { .requests = 0, .responses = 0 };
+                        RTE_LOG(INFO, USER1, "3");
+                    
                         if (flow_key.dst_port == 53) { // It's a DNS request
-                            new_counts_ptr->requests = 1;
+                            RTE_LOG(INFO, USER1, "3.1");
+                            new_counts.requests = 1;
                         } else if (flow_key.src_port == 53) { // It's a DNS response
-                            new_counts_ptr->responses = 1;
+                            RTE_LOG(INFO, USER1, "3.2");
+                            new_counts.responses = 1;
                         }
-                        if (rte_hash_add_key_data(dns_flow_counts_table, &dns_canonical_flow_key, (void*)new_counts_ptr) < 0) {
+                        RTE_LOG(INFO, USER1, "3.3");
+                        if (rte_hash_add_key_data(dns_flow_counts_table, &dns_canonical_flow_key, &new_counts) < 0) {
                             RTE_LOG(ERR, USER1, "failed to add NDS flow to count table\n");
-                            rte_free(new_counts_ptr); // Free allocated memory if add fails
                         }
                     } else { // Flow found, update counts
                         if (flow_key.dst_port == 53) { // It's a DNS request
@@ -372,7 +369,8 @@ void monitoring_main_loop(void)
                             dns_counts->responses++;
                         }
 
-                        // Check for DNS amplification attack
+                        //Check for DNS amplification attack
+                        RTE_LOG(INFO, USER1, "4");
                         if (dns_counts->responses > (dns_counts->requests + threshold->drop_threshold)) {
                             RTE_LOG(INFO, USER1, "丢弃 DNS 响应包，可能存在放大攻击流: %s:%hu -> %s:%hu\n",
                                     src_ip_str, flow_key.src_port, dst_ip_str, flow_key.dst_port);
@@ -381,11 +379,11 @@ void monitoring_main_loop(void)
                         }
                     }
                 }
-
+                RTE_LOG(INFO, USER1, "5");
                 if (dropped) {
                     continue; // Packet was dropped, move to next packet
                 }
-
+                RTE_LOG(INFO, USER1, "6");
                 uint16_t *destination_port = NULL;
                 RTE_LOG(INFO, USER1, "Destination MAC: %02x:%02x:%02x:%02x:%02x:%02x\n",
                         eth_hdr->dst_addr.addr_bytes[0], eth_hdr->dst_addr.addr_bytes[1],

@@ -297,6 +297,7 @@ void monitoring_main_loop(void)
                 uint32_t current_freq = sketch_add_item(sketch, &flow_for_sketch);
 
                 if (current_freq > threshold->hh_threshold) {
+                    RTE_LOG(INFO, USER1, "currentfrq:%u\t threshold:%u\n",current_freq, threshold->hh_threshold);
                     // Check if this flow has already been reported as HH
                     uint8_t *reported_flag = NULL;
                     if (rte_hash_lookup_data(hh_reported_table, &flow_key, (void **)&reported_flag) < 0) {
@@ -331,7 +332,6 @@ void monitoring_main_loop(void)
 
                     if (flow_key.src_port == 53) { // This is a DNS response
                         // Swap src and dst to get the "request" side of the flow for canonical key
-                        RTE_LOG(INFO, USER1, "1.1");
                         uint32_t temp_ip = dns_canonical_flow_key.src_ip;
                         dns_canonical_flow_key.src_ip = dns_canonical_flow_key.dst_ip;
                         dns_canonical_flow_key.dst_ip = temp_ip;
@@ -347,18 +347,18 @@ void monitoring_main_loop(void)
 
                     if (ret < 0) { // Flow not found, initialize counts and add to table
                         // Allocate memory for DnsFlowCounts on the heap
-                        RTE_LOG(INFO, USER1, "2");
+                    
                         DnsFlowCounts new_counts = { .requests = 0, .responses = 0 };
-                        RTE_LOG(INFO, USER1, "3");
+                    
                     
                         if (flow_key.dst_port == 53) { // It's a DNS request
-                            RTE_LOG(INFO, USER1, "3.1");
+                        
                             new_counts.requests = 1;
                         } else if (flow_key.src_port == 53) { // It's a DNS response
-                            RTE_LOG(INFO, USER1, "3.2");
+                         
                             new_counts.responses = 1;
                         }
-                        RTE_LOG(INFO, USER1, "3.3");
+                    
                         if (rte_hash_add_key_data(dns_flow_counts_table, &dns_canonical_flow_key, &new_counts) < 0) {
                             RTE_LOG(ERR, USER1, "failed to add NDS flow to count table\n");
                         }
@@ -370,7 +370,7 @@ void monitoring_main_loop(void)
                         }
 
                         //Check for DNS amplification attack
-                        RTE_LOG(INFO, USER1, "4");
+                  
                         if (dns_counts->responses > (dns_counts->requests + threshold->drop_threshold)) {
                             RTE_LOG(INFO, USER1, "丢弃 DNS 响应包，可能存在放大攻击流: %s:%hu -> %s:%hu\n",
                                     src_ip_str, flow_key.src_port, dst_ip_str, flow_key.dst_port);
@@ -379,11 +379,11 @@ void monitoring_main_loop(void)
                         }
                     }
                 }
-                RTE_LOG(INFO, USER1, "5");
+            
                 if (dropped) {
                     continue; // Packet was dropped, move to next packet
                 }
-                RTE_LOG(INFO, USER1, "6");
+           
                 uint16_t *destination_port = NULL;
                 RTE_LOG(INFO, USER1, "Destination MAC: %02x:%02x:%02x:%02x:%02x:%02x\n",
                         eth_hdr->dst_addr.addr_bytes[0], eth_hdr->dst_addr.addr_bytes[1],
